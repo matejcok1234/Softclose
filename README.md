@@ -7,6 +7,11 @@ live desktop, and renders it as a sheet folding away from you — tilting,
 blurring and falling into shadow as the lid comes down, settling back flat as it
 opens.
 
+![Softclose folding the desktop as the lid closes](docs/demo.gif)
+
+*Rendered against a mock desktop, driven by the same angle curve and spring the
+app uses.*
+
 [![Buy me a coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-support-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/matej2510)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-black?style=flat-square)
 ![Apple silicon](https://img.shields.io/badge/Apple%20silicon-required-black?style=flat-square)
@@ -63,8 +68,9 @@ open Settings.
   needs no Accessibility permission.
 
 Under **Advanced** are the constants the three style sliders scale — the fold
-depth in degrees, the widest blur radius, the lens distance, and the stiffness
-of the spring that follows the hinge. The settings window floats above the
+depth in degrees, the widest blur radius (in points, so it looks the same on any
+display), the lens distance, and the stiffness of the spring that follows the
+hinge. The settings window floats above the
 overlay on purpose, so all of it can be tuned against a live fold.
 
 Settings live in `defaults`, so a look can be inspected or scripted:

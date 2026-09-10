@@ -176,7 +176,12 @@ final class BendRenderer: NSObject, MTKViewDelegate {
         else { return }
 
         let desktop = capture.currentTexture()
-        var uniforms = makeUniforms(viewSize: view.drawableSize)
+        // Points per pixel, so the blur can be specified in points and look the
+        // same on any display rather than growing with resolution.
+        let pixelScale = view.bounds.height > 0
+            ? Float(view.drawableSize.height / view.bounds.height)
+            : 2
+        var uniforms = makeUniforms(viewSize: view.drawableSize, pixelScale: pixelScale)
 
         if let desktop {
             ensureScratchTextures(width: desktop.width, height: desktop.height)
@@ -250,7 +255,7 @@ final class BendRenderer: NSObject, MTKViewDelegate {
         pass(blurPipeline, from: blurA, to: blurB, direction: SIMD2(0, 1))
     }
 
-    private func makeUniforms(viewSize: CGSize) -> BendUniforms {
+    private func makeUniforms(viewSize: CGSize, pixelScale: Float) -> BendUniforms {
         let progress = smoothedProgress
         var uniforms = BendUniforms()
         uniforms.progress = progress
@@ -262,7 +267,12 @@ final class BendRenderer: NSObject, MTKViewDelegate {
         // Blur lags the fold slightly — it reads better if the sheet starts
         // moving before it starts softening.
         let blurStrength = Float(settings.blur) * pow(progress, 1.3)
-        uniforms.sigma = max(blurStrength * Float(settings.maxBlurRadius), 0.5)
+        // The blur runs on a half-resolution copy, so a radius given in points
+        // is scale/2 texels there: unchanged at 2x, correctly halved at 1x.
+        // Specifying it in raw texels instead would make the same setting blur
+        // twice as hard on a Retina display as on a standard one.
+        let texelsPerPoint = pixelScale / 2
+        uniforms.sigma = max(blurStrength * Float(settings.maxBlurRadius) * texelsPerPoint, 0.5)
         // Cross-fade to the blurred copy quickly and then stay there: a lasting
         // half-and-half mix keeps sharp edges visible through the blur, which
         // reads as a double image rather than as frost. Once sigma is wide

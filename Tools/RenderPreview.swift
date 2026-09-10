@@ -135,7 +135,9 @@ func render(progress: Float, perspective: Float, blur: Float, shadow: Float, to 
     uniforms.aspect = Float(width) / Float(height)
     uniforms.cameraDist = 3.0
     let blurStrength = blur * pow(progress, 1.3)
-    uniforms.sigma = max(blurStrength * 18, 0.5)
+    // Mock desktop is 1x, so half-resolution is half a point per texel — the
+    // same conversion the renderer does from its view's backing scale.
+    uniforms.sigma = max(blurStrength * 18 * 0.5, 0.5)
     uniforms.blurMix = min(uniforms.sigma / 4, 1)
     uniforms.shadow = shadow * progress
     uniforms.texelSize = SIMD2(2.0 / Float(width), 2.0 / Float(height))
@@ -204,6 +206,56 @@ func render(progress: Float, perspective: Float, blur: Float, shadow: Float, to 
     let rep = NSBitmapImageRep(cgImage: image)
     try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
     print("wrote \(path)")
+}
+
+// MARK: - Timeline
+//
+// A scripted lid close, run through the same spring the app uses, so the demo
+// moves the way the real thing does rather than being a linear sweep.
+
+func renderSequence(into directory: String) {
+    let fps = 30.0, duration = 5.0
+    let clearAngle = 98.0, closedAngle = 5.0
+    let stiffness = 220.0, damping = 2 * (220.0).squareRoot() * 0.9
+
+    func scriptedAngle(_ t: Double) -> Double {
+        switch t {
+        case ..<0.5:  return 100                      // sitting open
+        case ..<1.7:  return 100 - 82 * pow((t - 0.5) / 1.2, 0.85)   // closing
+        case ..<2.6:  return 18                       // held nearly shut
+        case ..<3.8:  return 18 + 82 * pow((t - 2.6) / 1.2, 1.2)     // opening
+        default:      return 100
+        }
+    }
+
+    var position = 0.0, velocity = 0.0
+    let frames = Int(fps * duration)
+    for frame in 0..<frames {
+        let t = Double(frame) / fps
+        let angle = scriptedAngle(t)
+        let linear = min(max(1 - (angle - closedAngle) / (clearAngle - closedAngle), 0), 1)
+        let target = linear * linear * (3 - 2 * linear)
+
+        // Substepped, as in the app.
+        let dt = 1.0 / fps
+        let steps = 8
+        for _ in 0..<steps {
+            let h = dt / Double(steps)
+            velocity += (-stiffness * (position - target) - damping * velocity) * h
+            position += velocity * h
+        }
+
+        render(progress: Float(max(position, 0)), perspective: 1.0, blur: 0.35, shadow: 0.30,
+               to: String(format: "%@/frame-%04d.png", directory, frame))
+    }
+    print("rendered \(frames) frames")
+}
+
+if CommandLine.arguments.count > 2, CommandLine.arguments[2] == "sequence" {
+    let directory = CommandLine.arguments[1]
+    try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    renderSequence(into: directory)
+    exit(0)
 }
 
 let outputDirectory = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "build/preview"
