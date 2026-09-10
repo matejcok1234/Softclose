@@ -39,6 +39,10 @@ final class BendController {
         self.capture = ScreenCapture(device: device)
         self.renderer = try BendRenderer(device: device, capture: capture, settings: settings)
 
+        renderer.progressProvider = { [weak self] in
+            MainActor.assumeIsolated { self?.currentProgress() ?? 0 }
+        }
+
         renderer.onFrame = { [weak self] progress in
             MainActor.assumeIsolated {
                 self?.didRenderFrame(progress: progress)
@@ -101,6 +105,17 @@ final class BendController {
         } ?? NSScreen.main
     }
 
+    /// How far the fold should be right now, from the freshest angle available.
+    /// Called once per frame by the renderer.
+    private func currentProgress() -> Float {
+        guard !settings.isPaused else { return 0 }
+        if let manual = settings.manualAngle {
+            return Float(BendCurve.progress(angle: manual, clearAngle: settings.clearAngle))
+        }
+        guard let angle = sensor.extrapolatedAngle() else { return 0 }
+        return Float(BendCurve.progress(angle: angle, clearAngle: settings.clearAngle))
+    }
+
     private func update(angle: Double) {
         currentAngle = angle
         onAngleChange?(angle)
@@ -121,12 +136,29 @@ final class BendController {
 
         let progress = Float(BendCurve.progress(angle: angle, clearAngle: settings.clearAngle))
         renderer.targetProgress = progress
-        if progress > 0.001 { activate() }
+
+        // Starting a capture stream takes a moment, so it is brought up while
+        // the lid is still above the clear angle. By the time the fold is
+        // actually visible the frames are already arriving, instead of the
+        // effect appearing a beat late and part-way down.
+        let approaching = angle < settings.clearAngle + Self.preRollDegrees
+        sensor.setPollRate(approaching ? LidAngleSensor.activeRate : LidAngleSensor.idleRate)
+
+        if progress > 0.001 {
+            activate()
+        } else if approaching {
+            activate(showingOverlay: false)
+        } else if capture.isRunning {
+            deactivate()
+        }
     }
 
-    private func activate() {
-        guard !isActive else { return }
-        isActive = true
+    /// How far above the clear angle the capture stream is brought up.
+    private static let preRollDegrees: Double = 12
+
+    private func activate(showingOverlay: Bool = true) {
+        guard !isActive || !showingOverlay else { return }
+        if showingOverlay { isActive = true }
         // Note there's no permission check here on purpose. Asking
         // ScreenCaptureKit and letting it fail is what makes macOS show its own
         // "would like to record this screen" prompt and list the app in
@@ -156,9 +188,11 @@ final class BendController {
             return created
         }()
         window.reposition(on: screen)
-        window.alphaValue = 0
-        window.orderFrontRegardless()
-        window.metalView.isPaused = false
+        if showingOverlay {
+            window.alphaValue = 0
+            window.orderFrontRegardless()
+            window.metalView.isPaused = false
+        }
 
         guard !capture.isRunning else { return }
 
@@ -223,8 +257,10 @@ final class BendController {
     /// stream down on every pass puts a visible delay at the start of each
     /// fold. Anything that genuinely ends the effect stops it at once instead.
     private func deactivate(lingering: Bool = true) {
-        pendingCaptureStop?.cancel()
-        pendingCaptureStop = nil
+        if !lingering {
+            pendingCaptureStop?.cancel()
+            pendingCaptureStop = nil
+        }
 
         if isActive {
             isActive = false
@@ -237,6 +273,11 @@ final class BendController {
             Task { [capture] in await capture.stop() }
             return
         }
+
+        // A countdown already running is left alone. This is called every time
+        // the angle changes while the lid is open, and cancelling and
+        // rescheduling on each one would defer the shutdown indefinitely.
+        guard pendingCaptureStop == nil else { return }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }

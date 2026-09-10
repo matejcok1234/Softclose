@@ -79,11 +79,53 @@ defaults delete io.github.matejcok1234.softclose manualAngle
 
 | | |
 |---|---|
-| `LidAngleSensor` | The hinge shows up as an Apple HID device (`las`) on the sensor usage page, usage `0x8A`. It pushes input reports of `[0x01, low, high]` — degrees, little-endian — so Softclose listens instead of polling. A half-second heartbeat re-reads the feature report, which also catches Screen Recording being granted while running. |
+| `LidAngleSensor` | The hinge is an Apple HID device (`las`) on the sensor usage page, usage `0x8A`, answering feature report 1 as `[0x01, low, high]` — whole degrees, little-endian. Polled, for the reason below. |
 | `ScreenCapture` | ScreenCaptureKit, filtered to exclude Softclose's own windows — the overlay is showing the capture, so including it would feed the picture back into itself. Frames arrive as `IOSurface`-backed Metal textures; nothing is copied to the CPU. |
 | `AppStatus` | Live runtime state, kept apart from persisted settings so the readout can move without the settings view being rebuilt under a slider mid-drag. |
 | `BendRenderer` | Eases toward the reported angle with a critically damped spring: the sensor jumps in whole degrees, the spring makes it fluid. That easing is the "settles". |
 | `Bend.metal` | The desktop is a sheet hinged along its bottom edge. Each row is rotated a little further than the one below it, so it curves into a circular arc rather than tipping as a rigid plane — that curve is what reads as a fold. Shading falls off along it, with ambient occlusion at the hinge. |
+
+### The sensor pushes, but you should poll it anyway
+
+The device registers an input-report callback, which looks like the tidier
+design — no polling, no wasted wakeups. Measured over 20 seconds of moving the
+lid, it is not:
+
+| path | new values, 20 s of motion | interval |
+|---|---|---|
+| pushed input reports | 13 | fixed **1 Hz** heartbeat, doesn't change when the lid moves |
+| polled feature report | 104 | median **101.8 ms** |
+
+The hardware latches a new angle about ten times a second and simply doesn't
+tell you. Polling gets ten times the data, which is most of the difference
+between a fold that steps and one that flows. Report IDs 2 and 3 were checked
+for finer precision — both are static config (`02 27`, `03 39 8f 94 00 00`,
+unchanged across 5,163 reads), so whole degrees is all there is.
+
+Polling costs about 0.5 ms of blocking IPC per read, so it runs on its own
+queue rather than the main thread — where it would eat a real slice of a 120 Hz
+frame budget — at 30 Hz near the fold and 10 Hz (≈0.6% of one core) while the
+lid is just open. Faster than 30 Hz samples the same value twice.
+
+### Smoothness
+
+Whole degrees arriving at 10 Hz, drawn at 120 fps, means twelve frames per new
+number. Three things bridge that gap, worth about 3× less frame-to-frame jerk in
+simulation than the naive version:
+
+1. **Extrapolation** — the angle is carried forward at the speed the lid was
+   last moving, capped at 90 ms of lead. Past that it stops being a good guess
+   and starts being a wobble, particularly where the lid changes direction.
+2. **A per-frame target** — the renderer pulls a fresh angle at the top of every
+   frame rather than waiting to be told one landed, so the fold can advance on
+   every refresh.
+3. **A substepped spring** — integrated in fixed 1/240 s steps, so a dropped
+   frame arrives late rather than as a kick. Damping is a ratio of critical,
+   defaulting to 0.9: it drifts fractionally past the target and comes back,
+   which is what reads as settling rather than stopping.
+
+Capture is also brought up 12° before the clear angle, so the stream is warm by
+the time the fold is visible instead of appearing a beat late and part-way down.
 
 ### Two things worth knowing about the shaders
 
@@ -127,6 +169,8 @@ Tools/
 probe/
   lidprobe.swift        Dumps the raw lid angle sensor reports
   inputprobe.swift      Confirms the sensor pushes input reports
+  ratetest.swift        Push rate vs poll rate, and what the other report
+                        IDs actually contain — the measurement above
 ```
 
 `Tools/RenderPreview.swift` is the fastest way to iterate on the look — it needs

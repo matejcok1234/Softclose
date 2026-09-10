@@ -40,6 +40,13 @@ final class BendRenderer: NSObject, MTKViewDelegate {
 
     /// Where the lid actually is, 0...1. Set from the controller.
     var targetProgress: Float = 0
+    /// Asked for a fresh target at the top of every frame.
+    ///
+    /// The sensor reports far less often than the display refreshes, so waiting
+    /// to be told the angle changed means the fold only moves on report
+    /// boundaries. Pulling it each frame lets the extrapolated angle advance
+    /// smoothly in between.
+    var progressProvider: (() -> Float)?
     /// Eased value the frame is drawn from.
     private(set) var smoothedProgress: Float = 0
     private var velocity: Float = 0
@@ -158,6 +165,7 @@ final class BendRenderer: NSObject, MTKViewDelegate {
         let now = CACurrentMediaTime()
         let dt = Float(min(max(now - lastFrameTime, 1.0 / 240), 1.0 / 20))
         lastFrameTime = now
+        if let progressProvider { targetProgress = progressProvider() }
         advanceSpring(dt: dt)
 
         defer { onFrame?(smoothedProgress) }
@@ -264,15 +272,31 @@ final class BendRenderer: NSObject, MTKViewDelegate {
         return uniforms
     }
 
-    /// Critically damped spring. Snappy enough to track a fast close, soft
-    /// enough that a degree of sensor jitter doesn't show.
+    /// Spring easing toward the hinge. Snappy enough to track a fast close,
+    /// soft enough that a degree of sensor jitter doesn't show.
+    ///
+    /// Damping is a ratio of critical: at 1.0 it slides to a stop without ever
+    /// passing the target, and a little under that it drifts fractionally past
+    /// and comes back — which is what reads as settling rather than stopping.
+    ///
+    /// Integrated in small fixed substeps. A stiff spring stepped once with a
+    /// long frame's dt overshoots on its own, so a dropped frame would show up
+    /// as a kick in the animation rather than just a late one.
     private func advanceSpring(dt: Float) {
         let stiffness = Float(settings.springStiffness)
-        let damping: Float = 2 * sqrt(stiffness)
-        let displacement = smoothedProgress - targetProgress
-        let acceleration = -stiffness * displacement - damping * velocity
-        velocity += acceleration * dt
-        smoothedProgress += velocity * dt
+        let damping = 2 * sqrt(stiffness) * Float(settings.dampingRatio)
+
+        var remaining = dt
+        let maxStep: Float = 1.0 / 240
+        while remaining > 0 {
+            let step = min(remaining, maxStep)
+            remaining -= step
+            let displacement = smoothedProgress - targetProgress
+            let acceleration = -stiffness * displacement - damping * velocity
+            velocity += acceleration * step
+            smoothedProgress += velocity * step
+        }
+
         if abs(smoothedProgress - targetProgress) < 0.0002, abs(velocity) < 0.0005 {
             smoothedProgress = targetProgress
             velocity = 0

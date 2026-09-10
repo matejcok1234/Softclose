@@ -1,17 +1,30 @@
 import Foundation
 import IOKit
 import IOKit.hid
+import QuartzCore
 
 /// Reads the hinge angle from the MacBook's own lid angle sensor.
 ///
-/// The sensor shows up as an Apple HID device ("las") on the sensor usage page
-/// (0x20) with usage 0x8A. It pushes input reports of the form
-/// `[reportID, angleLow, angleHigh]`, so we listen rather than poll. A feature
-/// report on the same ID gives the current angle on demand, which we use once at
-/// startup so the first frame isn't waiting on the sensor to tick.
+/// The sensor is an Apple HID device ("las") on the sensor usage page (0x20)
+/// with usage 0x8A, and it answers a feature report on ID 1 as
+/// `[0x01, low, high]` — whole degrees, little-endian.
+///
+/// It also *pushes* input reports, which looks like the tidier design until you
+/// measure it: those arrive on a fixed 1 Hz heartbeat and do not speed up when
+/// the lid moves. Polling the feature report surfaces a new value roughly every
+/// 100 ms — ten times the data. So polling is the primary path, and the pushed
+/// reports are kept only as a free extra sample between polls.
+///
+/// Polling is not free: each read is about 0.5 ms of blocking IPC. It therefore
+/// runs on its own queue rather than the main thread, where it would eat a
+/// meaningful slice of a 120 Hz frame budget, and it runs slowly while the lid
+/// is just sitting open.
 final class LidAngleSensor {
-    /// Latest angle in degrees, or nil if the sensor hasn't reported yet.
-    private(set) var angle: Double?
+    /// While the lid is somewhere we care about.
+    static let activeRate: Double = 30
+    /// While it is open and nothing is happening.
+    static let idleRate: Double = 10
+
     /// Called on the main queue whenever a new angle arrives.
     var onChange: ((Double) -> Void)?
 
@@ -19,8 +32,24 @@ final class LidAngleSensor {
     private var device: IOHIDDevice?
     private var reportBuffer = [UInt8](repeating: 0, count: 64)
 
-    /// True when the machine actually has a lid angle sensor.
+    private let lock = NSLock()
+    private var storedAngle: Double?
+    private var storedVelocity: Double = 0
+    private var lastChangeTime: CFTimeInterval?
+
+    private let pollQueue = DispatchQueue(label: "io.github.matejcok1234.softclose.sensor",
+                                          qos: .userInteractive)
+    private var pollTimer: DispatchSourceTimer?
+    private var currentRate: Double = 0
+
     var isAvailable: Bool { device != nil }
+
+    /// Latest reported angle in degrees.
+    var angle: Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedAngle
+    }
 
     init() {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -40,11 +69,13 @@ final class LidAngleSensor {
         self.manager = manager
         self.device = device
         _ = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
-        angle = readFeatureReport()
+        if let degrees = readFeatureReport() { record(degrees) }
     }
 
     func start() {
         guard let device else { return }
+
+        // The 1 Hz push costs nothing to listen to, so take it as a free sample.
         let context = Unmanaged.passUnretained(self).toOpaque()
         reportBuffer.withUnsafeMutableBufferPointer { buffer in
             IOHIDDeviceRegisterInputReportCallback(
@@ -52,22 +83,85 @@ final class LidAngleSensor {
                 { context, _, _, _, _, report, length in
                     guard let context else { return }
                     let sensor = Unmanaged<LidAngleSensor>.fromOpaque(context).takeUnretainedValue()
-                    sensor.handleReport(UnsafeBufferPointer(start: report, count: Int(length)))
+                    if let degrees = LidAngleSensor.parse(UnsafeBufferPointer(start: report, count: Int(length))) {
+                        sensor.record(degrees)
+                    }
                 },
                 context
             )
         }
         IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+
+        setPollRate(Self.idleRate)
     }
 
-    private func handleReport(_ bytes: UnsafeBufferPointer<UInt8>) {
-        guard let degrees = Self.parse(bytes) else { return }
-        angle = degrees
-        onChange?(degrees)
+    /// Polling only needs to outpace the hardware, which changes its answer
+    /// about every 100 ms. Faster than that is pure cost.
+    func setPollRate(_ hz: Double) {
+        guard device != nil, hz != currentRate else { return }
+        currentRate = hz
+
+        pollTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: pollQueue)
+        timer.schedule(deadline: .now(), repeating: 1.0 / hz, leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, let degrees = self.readFeatureReport() else { return }
+            self.record(degrees)
+        }
+        timer.resume()
+        pollTimer = timer
     }
 
-    /// Pulls the angle on demand. Used once at startup, and as a fallback if the
-    /// sensor stops pushing reports (it goes quiet while the lid is still).
+    /// Where the hinge has most likely reached by now.
+    ///
+    /// The sensor reports whole degrees about ten times a second; the display
+    /// refreshes twelve times in between. Holding the last value until the next
+    /// one lands makes the fold advance in visible steps, so it is carried
+    /// forward at the speed the lid was last moving. The lead is capped just
+    /// under one update interval — beyond that it stops being a good guess and
+    /// starts being a wobble, especially where the lid changes direction.
+    func extrapolatedAngle(maxLead: CFTimeInterval = 0.09) -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let storedAngle else { return nil }
+        guard let lastChangeTime, abs(storedVelocity) > 0.5 else { return storedAngle }
+        let lead = min(CACurrentMediaTime() - lastChangeTime, maxLead)
+        return storedAngle + storedVelocity * lead
+    }
+
+    /// Called from both the poll queue and the main run loop.
+    private func record(_ degrees: Double) {
+        lock.lock()
+        let now = CACurrentMediaTime()
+        let previous = storedAngle
+        var changed = false
+
+        if degrees != previous {
+            if let previous, let last = lastChangeTime {
+                let elapsed = now - last
+                if elapsed > 0.001, elapsed < 0.5 {
+                    let measured = (degrees - previous) / elapsed
+                    // The reports are whole degrees, so one interval's velocity
+                    // is quantised and jumpy on its own.
+                    storedVelocity += (measured - storedVelocity) * 0.5
+                } else {
+                    storedVelocity = 0
+                }
+            }
+            storedAngle = degrees
+            lastChangeTime = now
+            changed = true
+        } else if let last = lastChangeTime, now - last > 0.25, storedVelocity != 0 {
+            // Sitting still: stop carrying it forward.
+            storedVelocity = 0
+        }
+        lock.unlock()
+
+        guard changed else { return }
+        DispatchQueue.main.async { [weak self] in self?.onChange?(degrees) }
+    }
+
+    /// Pulls the angle on demand.
     func readFeatureReport() -> Double? {
         guard let device else { return nil }
         var buffer = [UInt8](repeating: 0, count: 8)
@@ -89,6 +183,7 @@ final class LidAngleSensor {
     }
 
     deinit {
+        pollTimer?.cancel()
         if let device {
             IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
             IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))

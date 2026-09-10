@@ -73,6 +73,8 @@ final class Settings: ObservableObject {
     @Published var cameraDistance: Double { didSet { persist() } }
     /// Spring constant for the easing. Higher tracks the hinge more tightly.
     @Published var springStiffness: Double { didSet { persist() } }
+    /// Damping as a fraction of critical. Just under 1 gives a small settle.
+    @Published var dampingRatio: Double { didSet { persist() } }
     @Published var isPaused: Bool = false
 
     private var isApplyingPreset = false
@@ -91,6 +93,7 @@ final class Settings: ObservableObject {
             "maxBlurRadius": 18.0,
             "cameraDistance": 3.0,
             "springStiffness": 220.0,
+            "dampingRatio": 0.9,
         ])
         style = BendStyle(rawValue: defaults.string(forKey: "style") ?? "") ?? .silk
         perspective = defaults.double(forKey: "perspective")
@@ -104,6 +107,7 @@ final class Settings: ObservableObject {
         maxBlurRadius = defaults.double(forKey: "maxBlurRadius")
         cameraDistance = defaults.double(forKey: "cameraDistance")
         springStiffness = defaults.double(forKey: "springStiffness")
+        dampingRatio = defaults.double(forKey: "dampingRatio")
     }
 
     /// Back to the shipped look, keeping the calibrated clear angle and the
@@ -118,6 +122,7 @@ final class Settings: ObservableObject {
         maxBlurRadius = 18
         cameraDistance = 3.0
         springStiffness = 220
+        dampingRatio = 0.9
         isApplyingPreset = false
         persist()
     }
@@ -166,6 +171,7 @@ final class Settings: ObservableObject {
         defaults.set(maxBlurRadius, forKey: "maxBlurRadius")
         defaults.set(cameraDistance, forKey: "cameraDistance")
         defaults.set(springStiffness, forKey: "springStiffness")
+        defaults.set(dampingRatio, forKey: "dampingRatio")
         if let manualAngle {
             defaults.set(manualAngle, forKey: "manualAngle")
         } else {
