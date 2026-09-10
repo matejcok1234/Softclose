@@ -20,17 +20,38 @@ app uses.*
 > beautifully. This is an independent implementation written from scratch — if
 > you like the idea, go and buy theirs too.
 
+## Download
+
+**[Softclose 1.0.0 (DMG)](https://github.com/matejcok1234/Softclose/releases/latest)** —
+drag it to Applications, then run this once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Softclose.app
+```
+
+That command is not optional and not a formality. Softclose is ad-hoc signed
+rather than signed with an Apple Developer ID, so Gatekeeper refuses a copy that
+arrives with a download's quarantine flag on it — you get *"Softclose is damaged
+and can't be opened"*, which is macOS's wording for "unnotarised", not a sign
+anything is actually wrong with the file. The command strips the quarantine flag.
+Right-click → Open does **not** get around it for an ad-hoc signature.
+
+Reasonable people don't run that command on a stranger's binary. The source is
+all here, `./install.sh` builds the same app from it, and the release notes carry
+the DMG's SHA-256 if you want to check the download matches what was published.
+
 ## Requirements
 
 - macOS 14 Sonoma or later
 - An Apple silicon MacBook with a lid angle sensor
 - Screen Recording permission, so the desktop can be captured
 
-## Install
+## Build it yourself
 
 ```bash
 ./install.sh          # build, install to /Applications, re-arm permission, launch
 ./build.sh            # just the bundle, into build/Softclose.app
+./release.sh          # build/Softclose-<version>.dmg
 ```
 
 The build compiles the Swift package, compiles `Bend.metal` into a metallib,
