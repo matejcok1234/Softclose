@@ -25,16 +25,26 @@ hdiutil create -volname "Softclose $VERSION" -srcfolder build/dmg \
     -ov -format UDZO -quiet "$DMG"
 rm -rf build/dmg
 
+# Notarisation. Needs a Developer ID signature and a stored notarytool profile;
+# see NOTARISING.md for the one-time setup. Skipped cleanly without them, so the
+# script still produces a working (if quarantine-flagged) DMG.
+PROFILE=${NOTARY_PROFILE:-softclose}
+if codesign -dvv build/Softclose.app 2>&1 | grep -q "Signature=adhoc"; then
+    echo "==> not notarising: app is ad-hoc signed"
+elif ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+    echo "==> not notarising: no notarytool profile '$PROFILE' (see NOTARISING.md)"
+else
+    echo "==> notarising (a few minutes)"
+    xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait 2>&1 | sed 's/^/    /'
+    echo "==> stapling"
+    xcrun stapler staple "$DMG" 2>&1 | sed 's/^/    /'
+fi
+
 echo "==> $DMG"
 ls -lh "$DMG" | awk '{print "    size:  " $5}'
 shasum -a 256 "$DMG" | awk '{print "    sha256: " $1}'
-spctl --assess --type execute -vv build/Softclose.app 2>&1 | sed 's/^/    gatekeeper: /'
+# The real test: what a user's Mac decides about the downloaded file.
+spctl --assess --type open --context context:primary-signature -v "$DMG" 2>&1 \
+    | sed 's/^/    gatekeeper: /'
 
-# To ship without the quarantine warning, replace the ad-hoc signature in
-# build.sh with a Developer ID Application certificate, then:
-#
-#   xcrun notarytool submit "$DMG" --keychain-profile <profile> --wait
-#   xcrun stapler staple "$DMG"
-#
-# The keychain profile is created once with `xcrun notarytool store-credentials`
-# and needs an app-specific password from appleid.apple.com.
+

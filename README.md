@@ -46,6 +46,11 @@ the DMG's SHA-256 if you want to check the download matches what was published.
 - An Apple silicon MacBook with a lid angle sensor
 - Screen Recording permission, so the desktop can be captured
 
+Releases are notarised when a Developer ID certificate and notarisation
+credentials are available on the build machine — see [NOTARISING.md](NOTARISING.md).
+Where they are, the download opens on a double-click and the instructions above
+don't apply.
+
 ## Build it yourself
 
 ```bash
