@@ -1,0 +1,30 @@
+import Foundation
+
+/// Live runtime state, separate from the persisted `Settings`.
+///
+/// It exists so the settings window can show a moving readout without being
+/// rebuilt: publishing the angle here lets SwiftUI update the one label that
+/// changed, instead of the whole view being reconstructed underneath a slider
+/// the user is still dragging.
+@MainActor
+final class AppStatus: ObservableObject {
+    static let shared = AppStatus()
+
+    @Published var angle: Double?
+    @Published var sensorAvailable = false
+    @Published var permissionGranted = false
+    /// Eased fold amount, 0...1. Throttled — the renderer produces this at the
+    /// display's refresh rate and SwiftUI has no use for 120 updates a second.
+    @Published var progress: Double = 0
+
+    private var lastProgressPublish = Date.distantPast
+
+    func publish(progress newValue: Double) {
+        guard abs(newValue - progress) > 0.005 || (newValue == 0 && progress != 0) else { return }
+        guard Date().timeIntervalSince(lastProgressPublish) > 0.05 else { return }
+        lastProgressPublish = Date()
+        progress = newValue
+    }
+
+    private init() {}
+}
