@@ -23,22 +23,17 @@ app uses.*
 ## Download
 
 **[Softclose 1.0.0 (DMG)](https://github.com/matejcok1234/Softclose/releases/latest)** —
-drag it to Applications, then run this once:
+open it and drag Softclose to Applications. That's the whole install.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Softclose.app
-```
+Signed with an Apple Developer ID certificate and notarised by Apple, so it opens
+on a double-click: no *"damaged and can't be opened"*, no right-click → Open, no
+terminal command. The notarisation ticket is stapled to both the disk image and
+the app, so it launches on a Mac that is offline too.
 
-That command is not optional and not a formality. Softclose is ad-hoc signed
-rather than signed with an Apple Developer ID, so Gatekeeper refuses a copy that
-arrives with a download's quarantine flag on it — you get *"Softclose is damaged
-and can't be opened"*, which is macOS's wording for "unnotarised", not a sign
-anything is actually wrong with the file. The command strips the quarantine flag.
-Right-click → Open does **not** get around it for an ad-hoc signature.
-
-Reasonable people don't run that command on a stranger's binary. The source is
-all here, `./install.sh` builds the same app from it, and the release notes carry
-the DMG's SHA-256 if you want to check the download matches what was published.
+On first launch it asks for **Screen Recording**. That is what lets it capture the
+desktop it bends; frames are rendered on the GPU and discarded, nothing is written
+to disk, and the app makes no network connections. The source is here if you'd
+rather check that than take my word for it.
 
 ## Requirements
 
@@ -46,10 +41,9 @@ the DMG's SHA-256 if you want to check the download matches what was published.
 - An Apple silicon MacBook with a lid angle sensor
 - Screen Recording permission, so the desktop can be captured
 
-Releases are notarised when a Developer ID certificate and notarisation
-credentials are available on the build machine — see [NOTARISING.md](NOTARISING.md).
-Where they are, the download opens on a double-click and the instructions above
-don't apply.
+Building from source gives you an ad-hoc signed app instead, which macOS treats
+differently — see [NOTARISING.md](NOTARISING.md) for what releases go through and
+how to set the same up yourself.
 
 ## Build it yourself
 

@@ -13,6 +13,32 @@ DMG="build/Softclose-$VERSION.dmg"
 
 ./build.sh
 
+PROFILE=${NOTARY_PROFILE:-softclose}
+ADHOC=$(codesign -dvv build/Softclose.app 2>&1 | grep -c "Signature=adhoc" || true)
+
+# Two rounds of notarisation, and the order matters.
+#
+# Round one is the app. Apple issues a ticket against its code signature, and
+# stapling writes that ticket into the bundle — which is what lets it launch on
+# a Mac that is offline. An unstapled app has to reach Apple on first launch
+# instead, and fails closed if it can't.
+#
+# Round two is the finished disk image, which has to happen after, because
+# packaging the stapled app changes the image and would invalidate any ticket
+# issued for an earlier version of it.
+
+if [ "$ADHOC" = "0" ] && xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+    echo "==> notarising the app (a few minutes)"
+    rm -f build/Softclose.zip
+    ditto -c -k --keepParent build/Softclose.app build/Softclose.zip
+    xcrun notarytool submit build/Softclose.zip --keychain-profile "$PROFILE" --wait 2>&1 \
+        | grep -E "id:|status:" | sed 's/^/    /'
+    rm -f build/Softclose.zip
+    xcrun stapler staple build/Softclose.app 2>&1 | tail -1 | sed 's/^/    /'
+else
+    echo "==> skipping notarisation (ad-hoc signed, or no '$PROFILE' profile — see NOTARISING.md)"
+fi
+
 echo "==> staging"
 rm -rf build/dmg
 mkdir -p build/dmg
@@ -25,26 +51,31 @@ hdiutil create -volname "Softclose $VERSION" -srcfolder build/dmg \
     -ov -format UDZO -quiet "$DMG"
 rm -rf build/dmg
 
-# Notarisation. Needs a Developer ID signature and a stored notarytool profile;
-# see NOTARISING.md for the one-time setup. Skipped cleanly without them, so the
-# script still produces a working (if quarantine-flagged) DMG.
-PROFILE=${NOTARY_PROFILE:-softclose}
-if codesign -dvv build/Softclose.app 2>&1 | grep -q "Signature=adhoc"; then
-    echo "==> not notarising: app is ad-hoc signed"
-elif ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
-    echo "==> not notarising: no notarytool profile '$PROFILE' (see NOTARISING.md)"
-else
-    echo "==> notarising (a few minutes)"
-    xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait 2>&1 | sed 's/^/    /'
-    echo "==> stapling"
-    xcrun stapler staple "$DMG" 2>&1 | sed 's/^/    /'
+if [ "$ADHOC" = "0" ]; then
+    IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" \
+        | head -1 | sed -E 's/.*"(.*)"/\1/')
+    if [ -n "$IDENTITY" ]; then
+        echo "==> signing the disk image"
+        codesign --force --sign "$IDENTITY" --timestamp "$DMG" 2>&1 | sed 's/^/    /'
+    fi
+    if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+        echo "==> notarising the disk image (a few minutes)"
+        xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait 2>&1 \
+            | grep -E "id:|status:" | sed 's/^/    /'
+        xcrun stapler staple "$DMG" 2>&1 | tail -1 | sed 's/^/    /'
+    fi
 fi
 
 echo "==> $DMG"
 ls -lh "$DMG" | awk '{print "    size:  " $5}'
 shasum -a 256 "$DMG" | awk '{print "    sha256: " $1}'
-# The real test: what a user's Mac decides about the downloaded file.
+# What a user's Mac decides, checked the way it will actually be asked:
+# the image on mount, and the app once it has been dragged out.
 spctl --assess --type open --context context:primary-signature -v "$DMG" 2>&1 \
-    | sed 's/^/    gatekeeper: /'
+    | sed 's/^/    image:  /'
+spctl --assess --type execute -v build/Softclose.app 2>&1 | sed 's/^/    app:    /'
+xcrun stapler validate "$DMG" >/dev/null 2>&1 \
+    && echo "    ticket: stapled to image and app" \
+    || echo "    ticket: NOT stapled to the image"
 
 
