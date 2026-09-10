@@ -37,7 +37,10 @@ final class BendController {
         guard let device = MTLCreateSystemDefaultDevice() else { throw ControllerError.noMetal }
         self.device = device
         self.capture = ScreenCapture(device: device)
-        self.renderer = try BendRenderer(device: device, capture: capture, settings: settings)
+        let capture = self.capture
+        self.renderer = try BendRenderer(device: device,
+                                         textureProvider: { capture.currentTexture() },
+                                         settings: settings)
 
         renderer.progressProvider = { [weak self] in
             MainActor.assumeIsolated { self?.currentProgress() ?? 0 }

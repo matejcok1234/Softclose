@@ -21,7 +21,11 @@ struct BendUniforms {
 final class BendRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let capture: ScreenCapture
+    /// Where each frame's source image comes from. The overlay hands over the
+    /// live capture; the settings preview hands over a still. Everything past
+    /// this point is identical, so the preview shows the real effect rather
+    /// than an approximation of it.
+    private let textureProvider: () -> MTLTexture?
     private let settings: Settings
 
     private var bendPipeline: MTLRenderPipelineState!
@@ -56,11 +60,13 @@ final class BendRenderer: NSObject, MTKViewDelegate {
     /// fade the window and decide when the effect has fully cleared.
     var onFrame: ((Float) -> Void)?
 
-    init(device: MTLDevice, capture: ScreenCapture, settings: Settings) throws {
+    init(device: MTLDevice,
+         textureProvider: @escaping () -> MTLTexture?,
+         settings: Settings) throws {
         self.device = device
         guard let queue = device.makeCommandQueue() else { throw RendererError.noQueue }
         self.queue = queue
-        self.capture = capture
+        self.textureProvider = textureProvider
         self.settings = settings
         super.init()
         try buildPipelines()
@@ -175,7 +181,7 @@ final class BendRenderer: NSObject, MTKViewDelegate {
               let commandBuffer = queue.makeCommandBuffer()
         else { return }
 
-        let desktop = capture.currentTexture()
+        let desktop = textureProvider()
         // Points per pixel, so the blur can be specified in points and look the
         // same on any display rather than growing with resolution.
         let pixelScale = view.bounds.height > 0

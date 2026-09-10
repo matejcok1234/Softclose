@@ -67,6 +67,14 @@ open Settings.
 - **⌥⌘B** — pause and resume from anywhere. Uses Carbon's hot key API, which
   needs no Accessibility permission.
 
+The settings window carries a **live preview** at the top: a still of your own
+desktop, folded by the same renderer and the same shaders as the overlay, looping
+a scripted lid close. Every slider takes effect in it immediately — which matters
+most for the spring, since stiffness and settle mean nothing in a still frame. It
+holds at a fixed angle instead of looping while you drag the angle by hand, and
+falls back to a mock desktop if Screen Recording hasn't been granted, so the look
+can still be tuned there.
+
 Under **Advanced** are the constants the three style sliders scale — the fold
 depth in degrees, the widest blur radius (in points, so it looks the same on any
 display), the lens distance, and the stiffness of the spring that follows the

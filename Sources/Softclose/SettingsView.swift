@@ -13,6 +13,8 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            preview
+            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if !status.permissionGranted { permissionNotice }
@@ -25,7 +27,29 @@ struct SettingsView: View {
                 .padding(20)
             }
         }
-        .frame(width: 440, height: 620)
+        .frame(width: 460, height: 700)
+    }
+
+    /// Deliberately above the controls rather than beside them: it stays in
+    /// view while you drag anything below it, which is the whole point.
+    private var preview: some View {
+        // Letterboxed to the display's own proportions. The fold fills the
+        // width of whatever view it is given, so a panel that isn't the shape
+        // of the screen would show a desktop stretched wider than the real one.
+        FoldPreview(settings: settings)
+            .aspectRatio(Self.displayAspect, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .frame(height: 210)
+            .background(Color.black)
+            .overlay(alignment: .bottomTrailing) {
+                Text(settings.manualAngle == nil ? "looping" : "held")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(.black.opacity(0.35)))
+                    .padding(8)
+            }
     }
 
     // MARK: - Header
@@ -73,6 +97,16 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+    }
+
+    private static var displayAspect: CGFloat {
+        let screen = NSScreen.screens.first { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            else { return false }
+            return CGDisplayIsBuiltin(number.uint32Value) != 0
+        } ?? NSScreen.main
+        guard let frame = screen?.frame, frame.height > 0 else { return 16.0 / 10.0 }
+        return frame.width / frame.height
     }
 
     // MARK: - Styles
