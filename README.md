@@ -30,6 +30,10 @@ on a double-click: no *"damaged and can't be opened"*, no right-click → Open, 
 terminal command. The notarisation ticket is stapled to both the disk image and
 the app, so it launches on a Mac that is offline too.
 
+It updates itself: a signed feed is checked daily, and there's a **Check for
+Updates…** item in the menu bar. Updates are verified against a key compiled
+into the app, so a tampered download is refused. See [UPDATING.md](UPDATING.md).
+
 On first launch it asks for **Screen Recording**. That is what lets it capture the
 desktop it bends; frames are rendered on the GPU and discarded, nothing is written
 to disk, and the app makes no network connections. The source is here if you'd

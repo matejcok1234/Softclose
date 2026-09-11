@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Sparkle
 import SwiftUI
 
 @MainActor
@@ -14,6 +15,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var angleMenuItem: NSMenuItem?
     private var pauseMenuItem: NSMenuItem?
     private var permissionMenuItem: NSMenuItem?
+
+    /// Checks for new versions against a signed appcast.
+    ///
+    /// An app distributed outside the App Store has no other way to reach the
+    /// people running it — whatever they install is what they keep, and nobody
+    /// goes back to a releases page. Updates are verified against an EdDSA
+    /// public key compiled into the bundle, so a tampered download is rejected
+    /// even if the feed itself is served over a compromised connection.
+    private lazy var updater = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -39,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         registerHotKey()
+        _ = updater      // starts the scheduled check
 
         if !ScreenPermission.isGranted {
             promptForPermission()
@@ -97,6 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let updateItem = NSMenuItem(title: "Check for Updates…",
+                                    action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                                    keyEquivalent: "")
+        updateItem.target = updater
+        menu.addItem(updateItem)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Softclose", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

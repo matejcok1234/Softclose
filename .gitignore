@@ -3,3 +3,10 @@ build/
 probe/lidprobe
 probe/inputprobe
 .DS_Store
+
+# Signing material. The Sparkle private key can push an update to every install
+# in the world, so it must never be committed even by accident.
+sparkle-private-key.txt
+*.p12
+*.pem
+*.key

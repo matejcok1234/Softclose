@@ -83,6 +83,12 @@ if [ "$ADHOC" = "0" ]; then
     fi
 fi
 
+# The feed the app reads to discover this build. Generated here so a release and
+# the thing announcing it can't drift apart.
+if [ -x .build/artifacts/sparkle/Sparkle/bin/generate_appcast ]; then
+    ./appcast.sh 2>&1 | grep -v WARNING | sed 's/^/    /' || true
+fi
+
 echo "==> $DMG"
 ls -lh "$DMG" | awk '{print "    size:  " $5}'
 shasum -a 256 "$DMG" | awk '{print "    sha256: " $1}'
