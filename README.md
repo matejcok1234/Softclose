@@ -22,7 +22,7 @@ app uses.*
 
 ## Download
 
-**[Softclose 1.0.0 (DMG)](https://github.com/matejcok1234/Softclose/releases/latest)** —
+**[Download Softclose (DMG)](https://github.com/matejcok1234/Softclose/releases/latest)** —
 open it and drag Softclose to Applications. That's the whole install.
 
 Signed with an Apple Developer ID certificate and notarised by Apple, so it opens
@@ -38,7 +38,9 @@ rather check that than take my word for it.
 ## Requirements
 
 - macOS 14 Sonoma or later
-- An Apple silicon MacBook with a lid angle sensor
+- An Apple silicon MacBook with a lid angle sensor — an iMac or a Mac mini has
+  no hinge to read, and an Intel MacBook doesn't report one. Settings has a
+  manual angle slider, which is the only way to see the effect on those.
 - Screen Recording permission, so the desktop can be captured
 
 Building from source gives you an ad-hoc signed app instead, which macOS treats
@@ -50,8 +52,15 @@ how to set the same up yourself.
 ```bash
 ./install.sh          # build, install to /Applications, re-arm permission, launch
 ./build.sh            # just the bundle, into build/Softclose.app
-./release.sh          # build/Softclose-<version>.dmg
+./release.sh          # signed, notarised, styled DMG
 ```
+
+`release.sh` notarises twice, and the order matters: the app first, so its ticket
+can be stapled into the bundle and it launches offline, then the finished disk
+image. Packaging the app changes the image, so doing it the other way round
+invalidates the image's ticket. The install window's layout is written straight
+into the image's `.DS_Store` by `dmgbuild` rather than by driving the Finder over
+AppleScript — that route needs Automation permission and hangs unpredictably.
 
 The build compiles the Swift package, compiles `Bend.metal` into a metallib,
 assembles the bundle and ad-hoc signs it.
@@ -199,8 +208,14 @@ blur, which reads as a double image rather than as frost.
 
 ## Privacy
 
-Frames are captured, rendered and discarded on device. Nothing is recorded,
-saved or uploaded, and Softclose makes no network connections of any kind.
+Frames are captured, rendered and discarded on the GPU. Nothing is written to
+disk, and Softclose makes no network connections of any kind.
+
+It also captures as little as it can get away with. Nothing is captured while
+the lid is simply open — and nothing while it merely *rests* near the angle
+where the effect begins, which is where many people work. The lid has to be
+moving closed before a stream starts, and the stream is torn down a few seconds
+after the desktop clears.
 
 The overlay is deliberately left visible to other recorders, so the fold can be
 screen-recorded — excluding it would make it invisible to QuickTime and ⌘⇧5.
@@ -208,6 +223,7 @@ screen-recorded — excluding it would make it invisible to QuickTime and ⌘⇧
 ## Layout
 
 ```
+dmg-settings.py         Install window geometry, read by dmgbuild
 Sources/Softclose/
   main.swift            NSApplication, accessory activation policy
   AppDelegate.swift     Menu bar, hot key, permission state
@@ -219,10 +235,12 @@ Sources/Softclose/
   SettingsView.swift    SwiftUI settings
   Settings.swift        Persistence, style presets, the angle→progress curve
   AppStatus.swift       Live runtime state for the UI
+  FoldPreview.swift     The live preview inside the settings window
   Click.swift           The click when the desktop clears, synthesised
   Shaders/Bend.metal    Fold, blur, shading
 Tools/
   MakeIcon.swift        Draws the icon at every size iconutil wants
+  MakeDMGBackground.swift  Draws the install window's backdrop, 1x and 2x
   RenderPreview.swift   Renders the fold against a mock desktop, for judging it
                         without permissions or a moving lid
 probe/
@@ -230,6 +248,9 @@ probe/
   inputprobe.swift      Confirms the sensor pushes input reports
   ratetest.swift        Push rate vs poll rate, and what the other report
                         IDs actually contain — the measurement above
+  elementtest.swift     Times the two ways of reading the sensor
+  elementvsreport.swift Polls both against a moving lid, which is what shows
+                        the cheap one to be stale
 ```
 
 `Tools/RenderPreview.swift` is the fastest way to iterate on the look — it needs
