@@ -20,10 +20,14 @@ import QuartzCore
 /// meaningful slice of a 120 Hz frame budget, and it runs slowly while the lid
 /// is just sitting open.
 final class LidAngleSensor {
-    /// While the lid is somewhere we care about.
+    /// While the lid is moving, or the fold is on screen.
     static let activeRate: Double = 30
-    /// While it is open and nothing is happening.
-    static let idleRate: Double = 10
+    /// Near the angle where the effect starts, so a fast close isn't missed.
+    static let idleRate: Double = 15
+    /// Lid holding still, or wide open. Slow enough to cost almost nothing,
+    /// still quick enough to catch a close starting — and the sensor's 1 Hz
+    /// push is a backstop underneath it.
+    static let restingRate: Double = 5
 
     /// Called on the main queue whenever a new angle arrives.
     var onChange: ((Double) -> Void)?
@@ -49,6 +53,15 @@ final class LidAngleSensor {
         lock.lock()
         defer { lock.unlock() }
         return storedAngle
+    }
+
+    /// Degrees per second, smoothed. Negative while the lid is closing. Used to
+    /// tell a lid on its way down from one merely sitting near the angle where
+    /// the effect begins.
+    var velocity: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedVelocity
     }
 
     init() {

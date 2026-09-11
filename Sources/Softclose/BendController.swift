@@ -23,6 +23,8 @@ final class BendController {
     private var captureDeniedAt: Date?
     /// A pending capture shutdown, cancelled if the lid moves again first.
     private var pendingCaptureStop: DispatchWorkItem?
+    /// When the hinge last read a different angle.
+    private var lastAngleChange = Date()
     private var cancellables = Set<AnyCancellable>()
     private var idleTimer: Timer?
 
@@ -64,20 +66,17 @@ final class BendController {
         settings.calibrateClearAngleIfNeeded(restingAt: sensor.angle)
         Log.info("start: sensor=\(sensor.isAvailable) angle=\(currentAngle.map { String(format: "%.0f", $0) } ?? "nil") clearAngle=\(settings.clearAngle) permission=\(ScreenPermission.isGranted)")
 
-        // The sensor goes quiet when the lid is still, which is fine, but a slow
-        // heartbeat means a missed report can never leave us stuck mid-fold.
-        // It also picks up Screen Recording being granted while we're running:
-        // permission arriving is not an event we can subscribe to, and without
-        // this the app would sit there doing nothing until it was relaunched.
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.settings.manualAngle == nil, let angle = self.sensor.readFeatureReport() {
-                    self.update(angle: angle)
-                } else {
-                    self.reevaluate()
-                }
-            }
+        // The sensor polls on its own timer, so this exists only to re-check
+        // state that changes without the hinge moving — Screen Recording being
+        // granted, chiefly, which is not something we can subscribe to.
+        //
+        // It deliberately does not read the angle. Doing so would be a second
+        // poll on top of the sensor's own, and passing an unchanged angle
+        // through update() would refresh the "last moved" timestamp twice a
+        // second, so the lid could never be seen holding still and the slow
+        // watch below would never engage.
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reevaluate() }
         }
 
         // Settings changes need to be reflected even when nothing is moving.
@@ -120,6 +119,7 @@ final class BendController {
     }
 
     private func update(angle: Double) {
+        lastAngleChange = Date()
         currentAngle = angle
         onAngleChange?(angle)
         reevaluate()
@@ -140,12 +140,41 @@ final class BendController {
         let progress = Float(BendCurve.progress(angle: angle, clearAngle: settings.clearAngle))
         renderer.targetProgress = progress
 
-        // Starting a capture stream takes a moment, so it is brought up while
-        // the lid is still above the clear angle. By the time the fold is
-        // actually visible the frames are already arriving, instead of the
-        // effect appearing a beat late and part-way down.
-        let approaching = angle < settings.clearAngle + Self.preRollDegrees
-        sensor.setPollRate(approaching ? LidAngleSensor.activeRate : LidAngleSensor.idleRate)
+        // Capture is brought up slightly before the fold is visible, because
+        // starting a stream takes a moment and the effect would otherwise
+        // appear a beat late and part-way down.
+        //
+        // Being near the clear angle is not enough on its own to justify that:
+        // plenty of people work with the lid a few degrees above it, and
+        // holding a capture stream open the whole time would mean recording the
+        // screen during ordinary use. So the lid also has to be *moving
+        // closed*. Sitting still inside the band captures nothing.
+        let nearClearAngle = angle < settings.clearAngle + Self.preRollDegrees
+        let closing = sensor.velocity < -Self.closingDegreesPerSecond
+        let approaching = nearClearAngle && (closing || progress > 0.001)
+
+        // Polling costs about half a millisecond of blocking IPC per read — the
+        // cheap element read turns out to be a stale mirror of the sensor's 1 Hz
+        // push, so there is no way around paying for it. The rate therefore
+        // follows how likely the next read is to tell us anything.
+        //
+        // A lid that hasn't moved in seconds is the common case by far: someone
+        // working with the laptop open. Polling it fifteen times a second to
+        // re-read a number that isn't changing is the single largest thing this
+        // app does while doing nothing. It drops to a slow watch, and any
+        // change at all takes it straight back up.
+        let stillFor = Date().timeIntervalSince(lastAngleChange)
+        let rate: Double
+        if approaching || progress > 0.001 {
+            rate = LidAngleSensor.activeRate
+        } else if stillFor > Self.stillnessSeconds, angle > settings.clearAngle + 5 {
+            rate = LidAngleSensor.restingRate
+        } else if angle < settings.clearAngle + Self.watchDegrees {
+            rate = LidAngleSensor.idleRate
+        } else {
+            rate = LidAngleSensor.restingRate
+        }
+        sensor.setPollRate(rate)
 
         if progress > 0.001 {
             activate()
@@ -156,8 +185,17 @@ final class BendController {
         }
     }
 
-    /// How far above the clear angle the capture stream is brought up.
+    /// How far above the clear angle the capture stream is brought up, once the
+    /// lid is actually on its way down.
     private static let preRollDegrees: Double = 12
+    /// Within this much of the clear angle, poll often enough to catch the
+    /// start of a fast close. Above it, the lid is nowhere near mattering.
+    private static let watchDegrees: Double = 30
+    /// Closing faster than this counts as intent, rather than a hand resting
+    /// on the screen or sensor noise.
+    private static let closingDegreesPerSecond: Double = 2
+    /// How long the hinge has to hold still before the slow watch takes over.
+    private static let stillnessSeconds: TimeInterval = 2
 
     private func activate(showingOverlay: Bool = true) {
         guard !isActive || !showingOverlay else { return }
@@ -170,10 +208,13 @@ final class BendController {
         // arrives, so a denied attempt is invisible rather than a black
         // overlay.
         //
-        // A refusal does back off though: the heartbeat would otherwise ask
-        // twice a second forever, which floods the log and pointlessly wakes
-        // ScreenCaptureKit while the user is still in Privacy settings.
-        if let captureDeniedAt, Date().timeIntervalSince(captureDeniedAt) < 5 {
+        // Once refused, stop asking until the permission actually changes.
+        // Retrying on a timer burns real CPU for nothing — a denied
+        // ScreenCaptureKit start is not cheap — and it can't succeed until the
+        // user grants it anyway. The first attempt is always allowed through
+        // even when preflight says no, because that attempt is what makes macOS
+        // show its prompt in the first place.
+        if captureDeniedAt != nil, !ScreenPermission.isGranted {
             isActive = false
             return
         }

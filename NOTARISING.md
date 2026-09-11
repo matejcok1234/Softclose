@@ -44,7 +44,20 @@ password goes into your keychain under the profile name `softclose`, which is
 what `release.sh` looks for — override it with `NOTARY_PROFILE` if you name it
 something else.
 
-## 3. Release
+## 3. Install dmgbuild (once)
+
+The install window's layout — background, icon positions, window size — is
+written straight into the disk image's `.DS_Store` by `dmgbuild`, rather than by
+driving the Finder over AppleScript. The Finder route needs Automation
+permission and hangs unpredictably.
+
+```bash
+pipx install dmgbuild
+```
+
+Without it `release.sh` still produces a working image, just an unstyled one.
+
+## 4. Release
 
 ```bash
 ./release.sh

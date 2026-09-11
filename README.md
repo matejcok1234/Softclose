@@ -141,6 +141,31 @@ queue rather than the main thread — where it would eat a real slice of a 120 H
 frame budget — at 30 Hz near the fold and 10 Hz (≈0.6% of one core) while the
 lid is just open. Faster than 30 Hz samples the same value twice.
 
+### What it costs while you're just using the laptop
+
+About **0.4% of one core**, and no capture at all.
+
+Nothing is captured until the lid is both near the clear angle *and actually
+moving closed*. Resting a few degrees above the threshold — which is where a lot
+of people work — starts nothing, because holding a capture stream open during
+ordinary use is the wrong default no matter how cheap it is.
+
+The polling is the rest of the cost, and it tiers: 30 Hz while the lid moves,
+15 Hz near the threshold, 5 Hz once the hinge has held still for two seconds.
+The sensor's 1 Hz push sits underneath as a backstop.
+
+Two things worth knowing if you plan to make this cheaper:
+
+**The cheap read is a lie.** `IOHIDDeviceGetValue` on the angle element costs
+0.010 ms against 0.583 ms for the feature report — 58× less. It is also a cached
+mirror of the 1 Hz push stream. Polled side by side at 300 Hz against a moving
+lid, the element produced 6 distinct values (median gap 1002 ms) to the feature
+report's 40 (median gap 102 ms). It is stale, and cheapness buys nothing.
+
+**`ReportInterval` is settable and does nothing.** The device reports an
+interval of 8000 µs and accepts being set to anything you like; input reports
+keep arriving at exactly 1 Hz regardless.
+
 ### Smoothness
 
 Whole degrees arriving at 10 Hz, drawn at 120 fps, means twelve frames per new

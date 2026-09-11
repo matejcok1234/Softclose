@@ -39,17 +39,34 @@ else
     echo "==> skipping notarisation (ad-hoc signed, or no '$PROFILE' profile — see NOTARISING.md)"
 fi
 
-echo "==> staging"
-rm -rf build/dmg
-mkdir -p build/dmg
-cp -R build/Softclose.app build/dmg/Softclose.app
-ln -s /Applications build/dmg/Applications      # so the window is drag-to-install
+echo "==> background"
+swiftc -O Tools/MakeDMGBackground.swift -o build/makedmgbg
+./build/makedmgbg build >/dev/null
+# One TIFF carrying 1x and 2x, so the window is sharp on a Retina display.
+tiffutil -cathidpicheck build/dmg-background.png build/dmg-background@2x.png \
+    -out build/dmg-background.tiff >/dev/null 2>&1
 
 echo "==> dmg"
 rm -f "$DMG"
-hdiutil create -volname "Softclose $VERSION" -srcfolder build/dmg \
-    -ov -format UDZO -quiet "$DMG"
-rm -rf build/dmg
+if command -v dmgbuild >/dev/null 2>&1; then
+    # dmgbuild writes the .DS_Store directly. Driving the Finder over AppleScript
+    # is the usual way to lay out an install window, and it needs Automation
+    # permission, behaves differently when the screen is locked, and hangs often
+    # enough to be a poor fit for a release script.
+    # `|| true` because the filter can swallow every line, and under
+    # `set -o pipefail` a grep that matches nothing takes the script down with
+    # it — silently, after the image has already been built.
+    { dmgbuild -s dmg-settings.py -D app=build/Softclose.app \
+        "Softclose $VERSION" "$DMG" 2>&1 | grep -v "WARNING" | sed 's/^/    /'; } || true
+else
+    echo "    dmgbuild not installed — plain image (pipx install dmgbuild)"
+    rm -rf build/dmg && mkdir -p build/dmg
+    cp -R build/Softclose.app build/dmg/Softclose.app
+    ln -s /Applications build/dmg/Applications
+    hdiutil create -volname "Softclose $VERSION" -srcfolder build/dmg \
+        -ov -format UDZO -quiet "$DMG"
+    rm -rf build/dmg
+fi
 
 if [ "$ADHOC" = "0" ]; then
     IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" \

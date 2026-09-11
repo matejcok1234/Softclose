@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     static var shared: AppDelegate?
 
     private let settings = Settings.shared
@@ -21,9 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         do {
             let controller = try BendController(settings: settings)
-            controller.onAngleChange = { [weak self] angle in
-                AppStatus.shared.angle = angle
-                self?.updateMenu(angle: angle)
+            // Deliberately not refreshing the menu bar here. This fires every
+            // time the hinge moves a degree, and restyling menu items nobody is
+            // looking at costs more than it sounds — the menu is rebuilt when
+            // it opens instead.
+            controller.onAngleChange = { angle in
+                AppStatus.shared.publish(angle: angle)
             }
             controller.start()
             self.controller = controller
@@ -99,13 +102,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let quit = NSMenuItem(title: "Quit Softclose", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
 
+        menu.delegate = self
         status.menu = menu
         statusItem = status
+    }
+
+    /// The angle readout is only correct at the moment it is read, so it is
+    /// filled in as the menu opens.
+    func menuWillOpen(_ menu: NSMenu) {
+        updateMenu(angle: controller?.currentAngle)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === settingsWindow else { return }
         settingsWindow = nil
+        AppStatus.shared.isObserved = false
     }
 
     @objc private func openPermissionSettings() {
@@ -161,6 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
+        // Live values are worth publishing now that something is showing them.
+        AppStatus.shared.isObserved = true
+        AppStatus.shared.angle = controller?.currentAngle
     }
 
     // MARK: - Hot key

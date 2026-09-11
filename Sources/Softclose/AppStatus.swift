@@ -10,6 +10,11 @@ import Foundation
 final class AppStatus: ObservableObject {
     static let shared = AppStatus()
 
+    /// True only while the settings window is open. Publishing an angle ten
+    /// times a second wakes SwiftUI's machinery whether or not anything is on
+    /// screen to show it, and for a menu bar app that is almost never.
+    var isObserved = false
+
     @Published var angle: Double?
     @Published var sensorAvailable = false
     @Published var permissionGranted = false
@@ -19,7 +24,13 @@ final class AppStatus: ObservableObject {
 
     private var lastProgressPublish = Date.distantPast
 
+    func publish(angle newValue: Double?) {
+        guard isObserved else { return }
+        angle = newValue
+    }
+
     func publish(progress newValue: Double) {
+        guard isObserved else { return }
         guard abs(newValue - progress) > 0.005 || (newValue == 0 && progress != 0) else { return }
         guard Date().timeIntervalSince(lastProgressPublish) > 0.05 else { return }
         lastProgressPublish = Date()

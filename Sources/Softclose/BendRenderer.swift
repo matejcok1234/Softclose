@@ -55,6 +55,8 @@ final class BendRenderer: NSObject, MTKViewDelegate {
     private(set) var smoothedProgress: Float = 0
     private var velocity: Float = 0
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
+    private weak var lastDrawnTexture: MTLTexture?
+    private var hasDrawnOnce = false
 
     /// Fires with the eased progress after every frame, so the controller can
     /// fade the window and decide when the effect has fully cleared.
@@ -176,12 +178,21 @@ final class BendRenderer: NSObject, MTKViewDelegate {
 
         defer { onFrame?(smoothedProgress) }
 
+        let desktop = textureProvider()
+
+        // Nothing to draw if the fold has settled and the desktop underneath it
+        // hasn't changed — the lid held still mid-fold would otherwise redraw an
+        // identical frame 120 times a second.
+        let settled = smoothedProgress == targetProgress && velocity == 0
+        let sameFrame = desktop.map { $0 === lastDrawnTexture } ?? false
+        if settled, sameFrame, hasDrawnOnce { return }
+        lastDrawnTexture = desktop
+        hasDrawnOnce = true
+
         guard let descriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let commandBuffer = queue.makeCommandBuffer()
         else { return }
-
-        let desktop = textureProvider()
         // Points per pixel, so the blur can be specified in points and look the
         // same on any display rather than growing with resolution.
         let pixelScale = view.bounds.height > 0
